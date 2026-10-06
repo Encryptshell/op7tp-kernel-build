@@ -1,0 +1,60 @@
+name: Build OnePlus 7T Pro NetHunter Kernel
+
+on:
+  workflow_dispatch: # Allows you to manually click a button to start the build
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Maximize Build Space
+      uses: easimon/maximize-build-space@v10
+      with:
+        root-reserve-mb: 5120
+        swap-size-mb: 1024
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+
+    - name: Checkout Kernel Source
+      uses: actions/checkout@v4
+      with:
+        repository: 'V0lk3n/nethunter_kernel_oneplus_sm8150'
+        ref: 'nethunter-lineage-23.2'
+        submodules: 'recursive'
+
+    - name: Set Up Build Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
+        
+        # Link modern libtinfo6 to satisfy legacy libtinfo5 compiler checks on Ubuntu 24.04
+        sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+
+    - name: Download Pre-compiled AOSP Kernel Toolchain
+      run: |
+        mkdir -p tc/clang
+        cd tc/clang
+        curl -L -s -o aosp_clang.tar.gz "https://googlesource.com"
+        tar -xzf aosp_clang.tar.gz
+        rm aosp_clang.tar.gz
+
+    - name: Compile Kernel
+      run: |
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export PATH=$GITHUB_WORKSPACE/tc/clang/bin:$PATH
+        
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        export CLANG_TRIPLE=aarch64-linux-gnu-
+        export CC=clang
+        export LD=ld.lld
+        
+        chmod +x build.sh
+        ./build.sh
+        
+    - name: Upload Flashable Kernel Zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: AnyKernel3-oneplus7-los-23.2
+        path: AnyKernel3/*.zip
