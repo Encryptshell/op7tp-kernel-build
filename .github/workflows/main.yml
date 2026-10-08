@@ -1,0 +1,88 @@
+name: Build OnePlus 7T Pro NetHunter Kernel
+
+on:
+  workflow_dispatch: # Allows you to manually click a button to start the build
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Maximize Build Space
+      uses: easimon/maximize-build-space@v10
+      with:
+        root-reserve-mb: 5120
+        swap-size-mb: 1024
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
+
+    - name: Checkout Kernel Source
+      uses: actions/checkout@v4
+      with:
+        repository: 'V0lk3n/nethunter_kernel_oneplus_sm8150'
+        ref: 'nethunter-lineage-23.2'
+        submodules: 'recursive'
+
+    - name: Deploy Pre-compiled AOSP GCC Toolchains
+      run: |
+        mkdir -p gcc64 gcc32
+        git clone --depth=1 https://googlesource.com gcc64
+        git clone --depth=1 https://googlesource.com gcc32
+
+    - name: Set Up Build Environment
+      run: |
+        sudo apt-get update
+        # Added python-is-python3 to satisfy legacy kernel script execution requirements
+        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev device-tree-compiler python-is-python3
+        
+        # Link modern system libraries to bridge legacy compiler dependencies natively on Ubuntu 24.04
+        sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+        
+        # Inject legacy OpenSSL 1.1 binary library package to prevent the GCC binary from throwing initialization failures
+        wget http://ubuntu.com
+        sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb
+        rm libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb
+
+    - name: Compile Kernel
+      run: |
+        export ARCH=arm64
+        export SUBARCH=arm64
+        
+        # Inject both 64-bit and 32-bit GCC paths cleanly into the environment variables
+        export PATH=$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH
+        export CROSS_COMPILE=aarch64-linux-android-
+        export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+        
+        mkdir -p out
+        make O=out clean
+        make O=out mrproper
+        
+        # Merge target SM8150 baseline configurations natively
+        if [ -f arch/arm64/configs/vendor/sm8150-perf_defconfig ]; then
+          make O=out vendor/sm8150-perf_defconfig
+        elif [ -f arch/arm64/configs/guacamole_defconfig ]; then
+          make O=out guacamole_defconfig
+        else
+          make O=out defconfig
+        fi
+        
+        if [ -f arch/arm64/configs/vendor/oplus.config ]; then
+          cat arch/arm64/configs/vendor/oplus.config >> out/.config
+          make O=out oldconfig
+        fi
+        
+        # Compile everything directly using GCC
+        make -j$(nproc --all) O=out
+        
+        if [ -d AnyKernel3 ]; then
+          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp out/arch/arm64/boot/Image.gz AnyKernel3/
+          cd AnyKernel3 && zip -r9 ../nethunter-kernel-hotdog.zip *
+        else
+          cd out/arch/arm64/boot/ && zip -r9 ../../../../nethunter-kernel-hotdog.zip .
+        fi
+        
+    - name: Upload Flashable Kernel Zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: NetHunter-Kernel-oneplus7-hotdog
+        path: "*.zip"
